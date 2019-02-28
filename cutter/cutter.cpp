@@ -292,9 +292,9 @@ void Decoder::decode() {
     AVPacket avpacket {0};
     while(av_read_frame(fmt_context, &avpacket) >= 0)
     {
-        if(avpacket.stream_index != stream_idx)
-            continue;
-        decode_packet(&avpacket);
+        if(avpacket.stream_index == stream_idx)
+            decode_packet(&avpacket);
+        av_packet_unref(&avpacket);
     }
     decode_packet(nullptr);
     buffer.push(nullptr);
@@ -399,8 +399,6 @@ class Encoder
                     throw "Can't clone frame"s;
                 cloned->pts = enc_pts;
             }
-            //enc_pts += encoder_ctx->time_base.den * format_ctx->streams[0]->time_base.num /
-                    //(encoder_ctx->time_base.num * format_ctx->streams[0]->time_base.den);
             enc_pts += 4;
             int ret = avcodec_send_frame(encoder_ctx, cloned);
             av_frame_free(&cloned);
@@ -422,6 +420,7 @@ class Encoder
                 }
                 if(av_write_frame(format_ctx, &avpacket) < 0)
                     throw "Can't write frame"s;
+                av_packet_unref(&avpacket);
             }
         }
     private:
