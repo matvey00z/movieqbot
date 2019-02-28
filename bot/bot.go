@@ -74,6 +74,17 @@ func search(dbname string, query string) []string {
 	return matches
 }
 
+const placeholder = "```" + `
+....................................хуй.......
+хуй........хуй..хуй......хуй..хуй.......хуйхуй
+.хуй....хуй......хуй....хуй...хуй.....хуй..хуй
+..хуй..хуй........хуй..хуй....хуй....хуй...хуй
+...хуйхуй..........хуйхуй.....хуй...хуй....хуй
+..хуй..хуй............хуй.....хуй..хуй.....хуй
+.хуй....хуй..........хуй......хуй.хуй......хуй
+хуй......хуй........хуй.......хуйхуй.......хуй
+` + "```"
+
 func serve(dbname string, token string, proxyAddr string) {
 	var client *http.Client = nil
 	if proxyAddr != "" {
@@ -101,24 +112,26 @@ func serve(dbname string, token string, proxyAddr string) {
 		if update.Message == nil { // ignore any non-Message Updates
 			continue
 		}
+		command := update.Message.Command()
+		if command != "" {
+			if command == "ping" {
+				msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+					"pong")
+				bot.Send(msg)
+			} else {
+				msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+					placeholder)
+				msg.ParseMode = "Markdown"
+				bot.Send(msg)
+			}
+			continue
+		}
 		if update.Message.Text == "" { // ignore non-text messages
 			continue
 		}
 		results := search(dbname, update.Message.Text)
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID,
 			fmt.Sprintf("Нашёл %v, ща загружу, абажди", len(results)))
-		/*fmt.Sprintf("Нашёл %v, но не покажу\n%v", len(results),
-						`
-		хуй.........хуй..хуй.........хуй..хуй.........хуй.хуй
-		.хуй.......хуй....хуй.......хуй...хуй........хуй..хуй
-		..хуй.....хуй......хуй.....хуй....хуй.......хуй...хуй
-		...хуй...хуй........хуй...хуй.....хуй......хуй....хуй
-		....хуй.хуй..........хуй.хуй......хуй.....хуй.....хуй
-		...хуй...хуй...............хуй.......хуй....хуй......хуй
-		..хуй.....хуй.............хуй........хуй...хуй.......хуй
-		.хуй.......хуй...........хуй.........хуй..хуй........хуй
-		хуй.........хуй.........хуй..........хуй.хуй.........хуй
-		`))*/
 		bot.Send(msg)
 		for _, fname := range results {
 			animation := tgbotapi.NewAnimationUpload(update.Message.Chat.ID,
