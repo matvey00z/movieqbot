@@ -1,5 +1,2 @@
-bot/bot
-bot/pkg/
-bot/src/
 cutter/.idea/
-cutter/cmake-build-*/
+build/
