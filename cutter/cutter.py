@@ -70,7 +70,7 @@ def make_gifs(fname, index, groups, db):
                ':force_style=\'FontSize=32\''
                ',framerate=fps=25'
                ',format=pix_fmts=rgb8')
-    cmd = ['../cutter', fname, filter, task_fname, report_fname]
+    cmd = ['cutter', fname, filter, task_fname, report_fname]
     easy_run(cmd)
     id_re = re.compile('^(\d+)')
     with open(report_fname, "rt") as report_f:
