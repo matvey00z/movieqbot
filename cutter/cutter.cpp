@@ -141,7 +141,7 @@ class Buffer
             }
         }
     private:
-        static constexpr size_t max_size {4*1000UL*1000*1000}; // 1GB
+        static constexpr size_t max_size {4*1000UL*1000*1000}; // 4GB
 
         std::mutex bufmutex;
         double time_base {1.};
@@ -575,6 +575,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Error: %s\n", ex.c_str());
         exit(1);
     }
+    pthread_cancel(decoder_thread.native_handle());
     decoder_thread.join();
     return 0;
 }
