@@ -58,7 +58,7 @@ func Search(dbname string, query string, max_matches uint) []string {
 	var matches_left int = int(max_matches)
 	for _, r := range results {
 		match := records[r.Index].id
-		matches = append(matches, fmt.Sprintf("f%05d.gif", match))
+		matches = append(matches, fmt.Sprintf("f%05d.mp4", match))
 		matches_left -= 1
 		if max_matches > 0 && matches_left <= 0 {
 			break

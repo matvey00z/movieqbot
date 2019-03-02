@@ -35,7 +35,7 @@ class DBHandler:
         self.dbfile.close()
 
     def get_name(self, fid):
-        return 'f{:05d}.gif'.format(fid)
+        return 'f{:05d}.mp4'.format(fid)
 
     def request_id(self, text):
         ret = self.next_id
@@ -68,8 +68,7 @@ def make_gifs(fname, index, groups, db):
     filter = ( 'scale=348x216'
               f',subtitles=\'{fname}\':si={index}'
                ':force_style=\'FontSize=32\''
-               ',framerate=fps=25'
-               ',format=pix_fmts=rgb8')
+               ',framerate=fps=25')
     cmd = ['cutter', fname, filter, task_fname, report_fname]
     easy_run(cmd)
     id_re = re.compile('^(\d+)')

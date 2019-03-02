@@ -329,17 +329,13 @@ class Encoder
         {
             try
             {
-                avformat_alloc_output_context2(&format_ctx, nullptr, "gif", dest.c_str());
+                avformat_alloc_output_context2(&format_ctx, nullptr, nullptr, dest.c_str());
                 if(!format_ctx)
                     throw "Can't alloc output format context"s;
-                AVCodecID encoder_id = av_guess_codec(format_ctx->oformat, nullptr, dest.c_str(), nullptr,
-                        AVMEDIA_TYPE_VIDEO);
-                if(encoder_id == AV_CODEC_ID_NONE)
-                    throw "Can't find suitable encoder"s;
-                AVCodec *encoder = avcodec_find_encoder(encoder_id);
+                AVCodec *encoder = avcodec_find_encoder_by_name("libx264");
                 if(!encoder)
                     throw "Can't find encoder"s;
-                AVStream *stream = avformat_new_stream(format_ctx, encoder);
+                stream = avformat_new_stream(format_ctx, encoder);
                 if(!stream)
                     throw "Can't create output stream"s;
                 encoder_ctx = avcodec_alloc_context3(encoder);
@@ -347,12 +343,11 @@ class Encoder
                     throw "Can't alloc encoder context"s;
                 encoder_ctx->width = sample->width;
                 encoder_ctx->height = sample->height;
-                //encoder_ctx->time_base = {1, 10};
-                encoder_ctx->time_base = {1,100};
-                stream->time_base = {1, 100};
+                encoder_ctx->time_base = {1, 25};
                 encoder_ctx->pix_fmt = (AVPixelFormat)sample->format;
                 AVDictionary *opts = nullptr;
-                if(av_dict_set(&opts, "threads", "auto", 0) < 0)
+                if(av_dict_set(&opts, "threads", "auto", 0) < 0 ||
+                        av_dict_set(&opts, "preset", "slow", 0) < 0)
                     throw "Can't set encoder options"s;
                 if(avcodec_open2(encoder_ctx, encoder, &opts) < 0)
                     throw "Can't open encoder"s;
@@ -398,8 +393,9 @@ class Encoder
                 if(!cloned)
                     throw "Can't clone frame"s;
                 cloned->pts = enc_pts;
+                cloned->pict_type = AV_PICTURE_TYPE_NONE;
             }
-            enc_pts += 4;
+            ++enc_pts;
             int ret = avcodec_send_frame(encoder_ctx, cloned);
             av_frame_free(&cloned);
             if(ret < 0)
@@ -412,12 +408,14 @@ class Encoder
                     break;
                 if(ret == AVERROR_EOF)
                 {
-                    if(av_write_frame(format_ctx, &avpacket) < 0)
+                    if(av_write_frame(format_ctx, nullptr) < 0)
                         throw "Can't flush muxer"s;
                     if(av_write_trailer(format_ctx) < 0)
                         throw "Can't write trailer"s;
                     break;
                 }
+                av_packet_rescale_ts(&avpacket, encoder_ctx->time_base,
+                        stream->time_base);
                 if(av_write_frame(format_ctx, &avpacket) < 0)
                     throw "Can't write frame"s;
                 av_packet_unref(&avpacket);
@@ -426,6 +424,7 @@ class Encoder
     private:
         AVFormatContext *format_ctx {nullptr};
         AVCodecContext *encoder_ctx {nullptr};
+        AVStream *stream {nullptr};
         int enc_pts {0};
 };
 
