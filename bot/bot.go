@@ -1,18 +1,16 @@
 package main
 
 import (
+	"../search"
 	"bufio"
-	"encoding/csv"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
 
 	"github.com/go-telegram-bot-api/telegram-bot-api"
-	"github.com/sahilm/fuzzy"
 	"golang.org/x/net/proxy"
 )
 
@@ -21,61 +19,6 @@ const (
 )
 
 var authList = make(map[int64]struct{})
-
-type tRecord struct {
-	id   uint64
-	text string
-}
-
-type tRecords []tRecord
-
-func (records tRecords) String(i int) string {
-	return records[i].text
-}
-
-func (records tRecords) Len() int {
-	return len(records)
-}
-
-func search(dbname string, query string) []string {
-	f, err := os.Open(dbname)
-	defer f.Close()
-	if err != nil {
-		log.Panic(err)
-	}
-	reader := csv.NewReader(f)
-	var records tRecords
-	for {
-		record, err := reader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Panic(err)
-		}
-		if len(record) < 2 {
-			log.Printf("Malformed record: %v\n", record)
-		}
-		var id uint64
-		id, err = strconv.ParseUint(record[0], 10, 64)
-		if err != nil {
-			log.Printf("Malformed record: %v\n", record)
-		}
-		records = append(records, tRecord{id, record[1]})
-	}
-	results := fuzzy.FindFrom(query, records)
-	matches := make([]string, 0, max_matches)
-	var matches_left int = max_matches
-	for _, r := range results {
-		match := records[r.Index].id
-		matches = append(matches, fmt.Sprintf("f%05d.gif", match))
-		matches_left -= 1
-		if matches_left <= 0 {
-			break
-		}
-	}
-	return matches
-}
 
 const placeholder = "```" + `
 ....................................хуй.......
@@ -138,7 +81,7 @@ func serve(dbname string, token string, proxyAddr string) {
 		if update.Message.Text == "" { // ignore non-text messages
 			continue
 		}
-		results := search(dbname, update.Message.Text)
+		results := search.Search(dbname, update.Message.Text, max_matches)
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID,
 			fmt.Sprintf("Нашёл %v, ща загружу, абажди", len(results)))
 		bot.Send(msg)
