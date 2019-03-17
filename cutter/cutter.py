@@ -22,6 +22,8 @@ class DBHandler:
             with open(self.dbname, "rt") as db:
                 reader = csv.reader(db)
                 for row in reader:
+                    if len(row) == 0:
+                        continue
                     row_id = int(row[0])
                     if row_id >= self.next_id:
                         self.next_id = row_id + 1

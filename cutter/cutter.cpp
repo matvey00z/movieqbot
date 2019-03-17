@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <vector>
 #include <thread>
+#include <atomic>
 
 extern "C"
 {
@@ -102,10 +103,15 @@ class Buffer
                 return;
             }
             size_t size = get_video_frame_size(avframe);
-            while(current_size + size > max_size && !q.empty())
+            while(current_size + size > max_size && !q.empty() && cont_flag)
                 update.wait(lock);
-            q.push_back(avframe);
-            current_size += size;
+            if(cont_flag)
+            {
+                q.push_back(avframe);
+                current_size += size;
+            }
+            else
+                av_frame_free(&avframe);
             update.notify_all();
         }
         void get_sequence(double start, double end, std::vector<AVFrame *> &sequence)
@@ -140,6 +146,12 @@ class Buffer
                 sequence.push_back(f);
             }
         }
+        void signal_finish()
+        {
+            std::unique_lock<std::mutex> lock(bufmutex);
+            cont_flag = false;
+            update.notify_all();
+        }
     private:
         static constexpr size_t max_size {4*1000UL*1000*1000}; // 4GB
 
@@ -148,6 +160,7 @@ class Buffer
         std::condition_variable update;
         std::deque<AVFrame *> q;
         size_t current_size {0};
+        bool cont_flag {true};
 };
 class Decoder
 {
@@ -156,6 +169,7 @@ class Decoder
         void deinit();
         ~Decoder();
         void decode();
+        void signal_finish();
     private:
         Buffer &buffer;
         AVFormatContext *fmt_context {nullptr};
@@ -166,6 +180,7 @@ class Decoder
         AVFilterContext *fsrc_context {nullptr};
         AVFrame *frame_decoder {nullptr};
         AVFrame *frame_filter {nullptr};
+        std::atomic_flag cont_flag;
 
         void decode_packet(AVPacket *avpacket);
         void filter_frame(AVFrame *avframe);
@@ -174,6 +189,7 @@ class Decoder
 Decoder::Decoder(const std::string &source, const std::string &filter, Buffer &buffer)
     : buffer(buffer)
 {
+    cont_flag.test_and_set();
     try
     {
         if(avformat_open_input(&fmt_context, source.c_str(), nullptr, nullptr) < 0)
@@ -290,7 +306,7 @@ void Decoder::decode_packet(AVPacket *avpacket) {
 
 void Decoder::decode() {
     AVPacket avpacket {0};
-    while(av_read_frame(fmt_context, &avpacket) >= 0)
+    while(cont_flag.test_and_set() && av_read_frame(fmt_context, &avpacket) >= 0)
     {
         if(avpacket.stream_index == stream_idx)
             decode_packet(&avpacket);
@@ -320,6 +336,12 @@ void Decoder::filter_frame(AVFrame *avframe)
         buffer.push(frame_filter);
         frame_filter = nullptr;
     }
+}
+
+void Decoder::signal_finish()
+{
+    cont_flag.clear();
+    buffer.signal_finish();
 }
 
 class Encoder
@@ -551,11 +573,20 @@ int main(int argc, char *argv[])
 {
     Args args(argc, argv);
     Buffer buffer;
+    std::unique_ptr<Decoder> decoder;
+    try
+    {
+        decoder = std::make_unique<Decoder>(args.source, args.filter, buffer);
+    }
+    catch(std::string &ex)
+    {
+        fprintf(stderr, "Decoder initialization error: %s\n", ex.c_str());
+        exit(1);
+    }
     auto decoder_thread = std::thread{[&]{
         try
         {
-            Decoder decoder(args.source, args.filter, buffer);
-            decoder.decode();
+            decoder->decode();
             fprintf(stderr, "Decoding finished\n");
         }
         catch(std::string &ex)
@@ -574,7 +605,8 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Error: %s\n", ex.c_str());
         exit(1);
     }
-    pthread_cancel(decoder_thread.native_handle());
+    fprintf(stderr, "Encoding finished\n");
+    decoder->signal_finish();
     decoder_thread.join();
     return 0;
 }

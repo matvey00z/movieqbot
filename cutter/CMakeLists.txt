@@ -5,5 +5,5 @@ add_executable(cutter cutter.cpp)
 target_link_options(cutter PUBLIC "-pthread")
 add_definitions(-std=c++14)
 set_property(TARGET cutter PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
-target_link_libraries(cutter avformat avcodec avfilter avutil swscale swresample
+target_link_libraries(cutter avfilter avformat avcodec avutil swscale swresample
     z ass x264 postproc)
