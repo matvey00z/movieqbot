@@ -4,6 +4,7 @@ export GOPATH=$(pwd)
 go get github.com/sahilm/fuzzy
 go get github.com/go-telegram-bot-api/telegram-bot-api
 go get golang.org/x/net/proxy
+go get github.com/mattn/go-sqlite3
 
 pkg_path="$(dirname "$0"})"
 # go build requires the path to be relative

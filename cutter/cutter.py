@@ -5,81 +5,207 @@ import re
 import subprocess
 import json
 import os
-import csv
+import sqlite3
 from enum import Enum
+import hashlib
 
 class DBHandler:
     '''
-    CSV file: id,text
+    Table gifs
+        id    int64
+        fname string
+        text  string
+        start int64 # msec
+        length it64 # msec
+        tg_id int64
+    Table movies
+        id       int64
+        hash     string
+        sub_id   int8
+        start_id int64
+        end_id   int64
+    Table failed_gifs
+        gif_id   int64
     '''
     def __init__(self):
-        self.dbname = "db.csv"
-        self.next_id = 0
-        self.tmpdb = {}
+        self.dbname = "db.sqlite3"
 
     def __enter__(self):
-        try:
-            with open(self.dbname, "rt") as db:
-                reader = csv.reader(db)
-                for row in reader:
-                    if len(row) == 0:
-                        continue
-                    row_id = int(row[0])
-                    if row_id >= self.next_id:
-                        self.next_id = row_id + 1
-        except:
-            pass
-        self.dbfile = open(self.dbname, "at")
-        self.db = csv.writer(self.dbfile)
+        self.conn = sqlite3.connect(self.dbname)
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS gifs
+            (id    int  NOT NULL PRIMARY KEY,
+             name  text NOT NULL UNIQUE,
+             text  text NOT NULL,
+             start int  NOT NULL,
+             end   int  NOT NULL,
+             tg_id int  UNIQUE)
+            ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS movies
+            (id       INTEGER  NOT NULL PRIMARY KEY AUTOINCREMENT,
+             hash     text     NOT NULL,
+             sub_id   int      NOT NULL,
+             start_id int      NOT NULL UNIQUE,
+             end_id   int      NOT NULL UNIQUE,
+             UNIQUE (hash, sub_id))
+            ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS failed_gifs
+            (gif_id int NOT NULL PRIMARY KEY)''')
+        self.conn.commit()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        self.dbfile.close()
+        self.conn.commit()
+        self.conn.close()
 
-    def get_name(self, fid):
-        return 'f{:05d}.mp4'.format(fid)
+    def request_movie(self, hash, sub_id, groups_cnt):
+        '''
+        Search DB for existing gifs for this movie.
+        Return (start_id, offset).
+        offset is the number for the first group to use
+        start_id is the id for the first group to use
+        '''
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT id, start_id, end_id FROM movies
+            WHERE hash = ? AND sub_id = ?''',
+            (hash, sub_id))
+        rows = cursor.fetchall()
+        assert len(rows) <= 1
+        if len(rows) != 0:
+            movie_id, start_id, end_id = rows[0]
+            orig_start_id = start_id
+            cursor.execute('''
+                SELECT id from gifs
+                WHERE id >= ? AND id <= ?
+                ORDER BY id DESC LIMIT 1''',
+                (start_id, end_id))
+            rows = cursor.fetchall()
+            assert len(rows) <= 1
+            if len(rows) != 0:
+                start_id = max(start_id, rows[0][0] + 1)
+            cursor.execute('''
+                SELECT gif_id FROM failed_gifs
+                WHERE gif_id >= ? AND gif_id <= ?
+                ORDER BY gif_id DESC LIMIT 1''',
+                (start_id, end_id))
+            rows = cursor.fetchall()
+            assert len(rows) <= 1
+            if len(rows) != 0:
+                print(rows)
+                failed_id = rows[0][0]
+                print('File {}: found failed gif {} (id {})'
+                        .format(hash, failed_id - orig_start_id, failed_id))
+                start_id = max(start_id, failed_id + 1)
+            print('File {}: resuming from gif {} (id {})'
+                    .format(hash, start_id - orig_start_id, start_id))
+            return start_id, start_id - orig_start_id
+        cursor.execute('''SELECT end_id FROM movies
+                          ORDER BY end_id DESC LIMIT 1''')
+        rows = cursor.fetchall()
+        assert len(rows) <= 1
+        if len(rows) == 0:
+            start_id = 0
+        else:
+            start_id = rows[0][0] + 1
+        cursor.execute('''
+            INSERT INTO movies
+            (hash, sub_id, start_id, end_id)
+            VALUES(?, ?, ?, ?)''',
+            (hash, sub_id, start_id, start_id + groups_cnt - 1))
+        self.conn.commit()
+        return (start_id, 0)
 
-    def request_id(self, text):
-        ret = self.next_id
-        self.next_id += 1
-        self.tmpdb[ret] = text
-        return ret
+    def report_ok(self, fid, fname, text, start, end):
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            INSERT INTO gifs
+            (id, name, text, start, end)
+            VALUES(?, ?, ?, ?, ?)''',
+            (fid, fname, text, int(start*1000), int(end*1000)))
 
-    def commit(self, fid):
-        self.db.writerow([fid, self.tmpdb[fid]])
-        self.dbfile.flush()
-        del self.tmpdb[fid]
+    def report_failed(self, fid):
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            INSERT INTO failed_gifs
+            (gif_id)
+            VALUES(?)''',
+            (fid,))
 
 
-def easy_run(cmd):
+def get_name(fid):
+    return 'f{:08d}.mp4'.format(fid)
+
+
+def calculate_hash(fname):
+    BUFSIZE = 16*1024*1024
+    h = hashlib.sha256()
+    with open(fname, 'rb') as f:
+        for data in iter(lambda: f.read(BUFSIZE), b''):
+            h.update(data)
+    return h.hexdigest()
+
+
+def easy_run(cmd, check=True):
     proc = subprocess.run(cmd, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, check=True,
+            stderr=subprocess.DEVNULL, check=check,
             universal_newlines=True)
     return proc.stdout
 
-def make_gifs(fname, index, groups, db):
+def make_gifs(fname, index, groups, start_id, db):
+    '''
+    Return True on success, False on faliure
+    '''
+    if len(groups) == 0:
+        return True
     task_fname = "task.txt"
     report_fname = "report.txt"
+    try:
+        os.remove(report_fname)
+    except OSError:
+        pass
+    fid = start_id
     with open(task_fname, "wt") as task_f:
         for group in groups:
             start, end, text = group
-            fid = db.request_id(text)
-            gifname = db.get_name(fid)
+            gifname = get_name(fid)
             print('{} {} {} {}'.format(fid, gifname,
                 int(start*1000), int(end*1000)), file=task_f)
+            fid += 1
+
     filter = ( 'scale=348x216'
               f',subtitles=\'{fname}\':si={index}'
                ':force_style=\'FontSize=32\''
                ',framerate=fps=25')
     cmd = ['cutter', fname, filter, task_fname, report_fname]
-    easy_run(cmd)
+    easy_run(cmd, check=False)
     id_re = re.compile('^(\d+)')
+    next_fid = start_id
+    max_fid = start_id + len(groups) - 1
+    groups_iter = (g for g in groups)
     with open(report_fname, "rt") as report_f:
         for line in report_f:
+            assert next_fid <= max_fid
             fid = int(id_re.match(line).group(0))
-            db.commit(fid)
+            assert fid >= next_fid
+            for failed_id in range(next_fid, fid):
+                db.report_failed(failed_id)
+                next(groups_iter)
+            start, end, text = next(groups_iter)
+            db.report_ok(fid, get_name(fid), text, start, end)
+            next_fid = fid + 1
+    if next_fid < max_fid:
+        db.report_failed(next_fid)
+        return False
+    return True
 
-def get_subtitles_one(fname, index, number, db):
+def get_subtitles_one(fname, hash, index, number, db):
+    '''
+    Return True on success, False on faliure
+    '''
     cmd = ['ffmpeg',
            '-i', fname,
            '-map', '0:' + str(index),
@@ -128,6 +254,7 @@ def get_subtitles_one(fname, index, number, db):
             lines.append(line)
     minlen = 2
     maxlen = 15
+    # A group is a tuple (start, end, text)
     groups = []
     open_groups = []
     for subtitle in subtitles:
@@ -147,10 +274,12 @@ def get_subtitles_one(fname, index, number, db):
                 new_open_groups.append((gstart, end, gtext + '\n' + text))
         open_groups = new_open_groups
         open_groups.append((start, end, text))
-    make_gifs(fname, number, groups, db)
+    start_id, offset = db.request_movie(hash, number, len(groups))
+    return make_gifs(fname, number, groups[offset:], start_id, db)
 
 
 def get_subtitles(fname, db):
+    hash = calculate_hash(fname)
     cmd = ['ffprobe',
            '-loglevel', 'quiet',
            '-select_streams', 's',
@@ -159,8 +288,11 @@ def get_subtitles(fname, db):
            fname]
     streams = json.loads(easy_run(cmd))['streams']
     number = 0
+    MAX_ATTEMPTS = 5
     for stream in streams:
-        get_subtitles_one(fname, stream['index'], number, db)
+        for attempt in range(MAX_ATTEMPTS):
+            if get_subtitles_one(fname, hash, stream['index'], number, db):
+                break
         number += 1
 
 
@@ -172,6 +304,7 @@ def main():
     os.makedirs(args.dir, exist_ok=True)
     os.chdir(args.dir)
     with DBHandler() as db:
+        pass
         get_subtitles(args.fname, db)
 
 if __name__ == '__main__':
