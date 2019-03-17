@@ -3,6 +3,7 @@ package search
 import (
 	"database/sql"
 	"log"
+	"os"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/sahilm/fuzzy"
@@ -27,7 +28,7 @@ func (records tRecords) Len() int {
 
 // max_matches = 0 means unlimited
 func Search(dbname string, query string, max_matches uint) []string {
-	extended := SearchEx(dbname, query, max_matches)
+	extended := SearchEx(dbname, query, max_matches, 0)
 	ret := make([]string, len(extended))
 	for i, ex := range extended {
 		ret[i] = ex.Name
@@ -35,7 +36,8 @@ func Search(dbname string, query string, max_matches uint) []string {
 	return ret
 }
 
-func SearchEx(dbname string, query string, max_matches uint) []Record {
+func SearchEx(dbname string, query string, max_matches uint,
+	max_size int64) []Record {
 	db, err := sql.Open("sqlite3", dbname)
 	if err != nil {
 		log.Panic(err)
@@ -63,6 +65,16 @@ func SearchEx(dbname string, query string, max_matches uint) []Record {
 	var matches_left int = int(max_matches)
 	for _, r := range results {
 		match := records[r.Index]
+		if max_size > 0 {
+			// TODO parametrize path
+			finfo, err := os.Stat("gifs/" + match.Name)
+			if err != nil {
+				log.Panic(err)
+			}
+			if finfo.Size() > max_size {
+				continue
+			}
+		}
 		matches = append(matches, match)
 		matches_left -= 1
 		if max_matches > 0 && matches_left <= 0 {

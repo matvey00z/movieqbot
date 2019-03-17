@@ -69,30 +69,38 @@ func (bot *tBot) handleCommand(update *tgbotapi.Update) bool {
 	return true
 }
 
+func (bot *tBot) uploadGif(chatId int64, gif_id uint64, fname string) string {
+	animation := tgbotapi.NewAnimationUpload(chatId, fname)
+	resp, err := bot.api.Send(animation)
+	if err != nil {
+		log.Panic(err)
+	}
+	fileId := resp.Animation.FileID
+	bot.updateFileId(gif_id, fileId)
+	return fileId
+}
+
 func (bot *tBot) handleQuery(update *tgbotapi.Update) {
-	results := search.SearchEx(bot.dbname, update.Message.Text, max_matches)
+	results := search.SearchEx(bot.dbname, update.Message.Text, max_matches,
+		1000*1000)
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID,
 		fmt.Sprintf("Нашёл %v, ща загружу, абажди", len(results)))
 	bot.api.Send(msg)
 	for _, result := range results {
 		var animation tgbotapi.AnimationConfig
-		shared := false
 		if result.TgFileId != nil && *result.TgFileId != "" {
 			animation = tgbotapi.NewAnimationShare(update.Message.Chat.ID,
 				*result.TgFileId)
-			shared = true
-		} else {
-			animation = tgbotapi.NewAnimationUpload(update.Message.Chat.ID,
-				"gifs/"+result.Name)
+			_, err := bot.api.Send(animation)
+			if err != nil {
+				log.Println(err)
+				// Do not 'continue', re-upload it below
+			} else {
+				continue
+			}
 		}
-		resp, err := bot.api.Send(animation)
-		if err != nil {
-			log.Panic(err)
-		}
-		if !shared {
-			fileId := resp.Animation.FileID
-			bot.updateFileId(result.Id, fileId)
-		}
+		bot.uploadGif(update.Message.Chat.ID, result.Id, "gifs/"+result.Name)
+		continue
 	}
 }
 
@@ -112,30 +120,35 @@ func (bot *tBot) handleInlineQuery(update *tgbotapi.Update) {
 		}
 		return
 	}
-	results := search.SearchEx(bot.dbname, update.InlineQuery.Query, max_matches)
-	respConf := tgbotapi.InlineConfig{
-		InlineQueryID: update.InlineQuery.ID,
-		IsPersonal:    false,
-	}
-	for id, result := range results {
-		if result.TgFileId == nil || *result.TgFileId == "" {
-			animation := tgbotapi.NewAnimationUpload(bot.serviceChatId,
-				"gifs/"+result.Name)
-			resp, err := bot.api.Send(animation)
-			if err != nil {
+	results := search.SearchEx(bot.dbname, update.InlineQuery.Query, max_matches,
+		1000*1000)
+	answer := func(forceUpload bool) bool {
+		respConf := tgbotapi.InlineConfig{
+			InlineQueryID: update.InlineQuery.ID,
+			IsPersonal:    false,
+		}
+		for id, result := range results {
+			if forceUpload || result.TgFileId == nil || *result.TgFileId == "" {
+				fileId := bot.uploadGif(bot.serviceChatId,
+					result.Id, "gifs/"+result.Name)
+				result.TgFileId = &fileId
+			}
+			gif := tgbotapi.NewInlineQueryResultCachedMPEG4GIF(strconv.Itoa(id),
+				*result.TgFileId)
+			respConf.Results = append(respConf.Results, gif)
+		}
+		_, err := bot.api.AnswerInlineQuery(respConf)
+		if err != nil {
+			if forceUpload {
 				log.Panic(err)
 			}
-			fileId := resp.Animation.FileID
-			bot.updateFileId(result.Id, fileId)
-			result.TgFileId = &fileId
+			log.Println(err)
+			return false
 		}
-		gif := tgbotapi.NewInlineQueryResultCachedMPEG4GIF(strconv.Itoa(id),
-			*result.TgFileId)
-		respConf.Results = append(respConf.Results, gif)
+		return true
 	}
-	_, err := bot.api.AnswerInlineQuery(respConf)
-	if err != nil {
-		log.Panic(err)
+	if !answer(false) {
+		answer(true)
 	}
 }
 
