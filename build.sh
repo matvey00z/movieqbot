@@ -27,4 +27,12 @@ strip -s bot
 cd "$root"
 cp build/bot/bot build/bin
 
+# Build web
+mkdir -p build/web
+cd build/web
+"$root"/web/build.sh
+strip -s web
+cd "$root"
+cp build/web/web build/bin/movieq_web
+
 echo "Build finished successfully"

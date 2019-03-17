@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<head>
+    <meta charset="utf-8">
+    <title>Movieq Admin</title>
+</head>
+<body>
+    <form action="/search" method="get">
+        <input type="text" name="query">
+        <input type="submit" value="search">
+    </form>
+    <h1>Search results for `{{.Query}}`</h1>
+    <ul>
+        {{range .Results}}
+        <li>
+            <video autoplay="autoplay" loop="loop">
+                <source src="{{.}}">
+            </video>
+        </li>
+        {{end}}
+    </ul>
+</body>
