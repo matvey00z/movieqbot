@@ -17,7 +17,8 @@ class DBHandler:
         text  string
         start int64 # msec
         length it64 # msec
-        tg_id int64
+        tg_id int64 # reserved
+        tg_file_id string
     Table movies
         id       int64
         hash     string
@@ -35,12 +36,12 @@ class DBHandler:
         cursor = self.conn.cursor()
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS gifs
-            (id    int  NOT NULL PRIMARY KEY,
-             name  text NOT NULL UNIQUE,
-             text  text NOT NULL,
-             start int  NOT NULL,
-             end   int  NOT NULL,
-             tg_id int  UNIQUE)
+            (id         int  NOT NULL PRIMARY KEY,
+             name       text NOT NULL UNIQUE,
+             text       text NOT NULL,
+             start      int  NOT NULL,
+             end        int  NOT NULL,
+             tg_file_id text UNIQUE)
             ''')
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS movies
